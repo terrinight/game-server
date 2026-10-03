@@ -4,12 +4,12 @@ import json
 import random
 import os
 
-player = {"x": 5, "y": 5}
-apple = {"x": random.randint(0, 9), "y": random.randint(0, 9)}
-score = 0
-
 async def game_handler(websocket):
-    global score, apple
+    # Đưa các biến vào BÊN TRONG hàm để mỗi người chơi có 1 bản sao độc lập
+    player = {"x": 5, "y": 5}
+    apple = {"x": random.randint(0, 9), "y": random.randint(0, 9)}
+    score = 0
+    
     await websocket.send(json.dumps({"player": player, "apple": apple, "score": score}))
     try:
         async for message in websocket:
@@ -30,9 +30,7 @@ async def game_handler(websocket):
         pass
 
 async def main():
-    # Lấy Port động từ Render cấp phát
     PORT = int(os.environ.get("PORT", 8765))
-    # 0.0.0.0 cho phép kết nối từ internet
     async with websockets.serve(game_handler, "0.0.0.0", PORT):
         await asyncio.Future()
 
