@@ -9,7 +9,7 @@ apple = {"x": random.randint(0, 9), "y": random.randint(0, 9)}
 score = 0
 
 async def game_handler(websocket):
-    global score
+    global score, apple
     await websocket.send(json.dumps({"player": player, "apple": apple, "score": score}))
     try:
         async for message in websocket:
