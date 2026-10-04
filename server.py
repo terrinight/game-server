@@ -5,75 +5,83 @@ import random
 import os
 
 async def game_handler(websocket):
-    # Khởi tạo bản đồ 20x20. Rắn giờ là 1 "danh sách" các ô (đang có 1 ô đầu tiên)
     snake = [{"x": 10, "y": 10}]
-    direction = "right" # Hướng mặc định lúc mới vào
+    
+    # Sử dụng Hàng đợi (Queue) để lưu trữ các lần bấm phím liên tiếp
+    direction_queue = ["right"]
+    current_dir = "right"
+    
     apple = {"x": random.randint(0, 19), "y": random.randint(0, 19)}
     score = 0
     running = True
+    game_state = "waiting"
 
-    # 1. Nhiệm vụ 1: Lắng nghe phím bấm liên tục để đổi hướng
     async def listen():
-        nonlocal direction, running
+        nonlocal direction_queue, running, game_state
         try:
             async for message in websocket:
                 data = json.loads(message)
                 action = data.get("action")
                 
-                # Không cho phép quay đầu 180 độ (đang đi trái thì không được bấm phải)
-                if action == "up" and direction != "down": direction = "up"
-                elif action == "down" and direction != "up": direction = "down"
-                elif action == "left" and direction != "right": direction = "left"
-                elif action == "right" and direction != "left": direction = "right"
+                if action == "start" and game_state != "playing":
+                    game_state = "playing"
+                    
+                elif game_state == "playing":
+                    # Lấy hướng cuối cùng trong hàng đợi để so sánh, tránh lỗi quay đầu 180 độ
+                    last_dir = direction_queue[-1] if len(direction_queue) > 0 else current_dir
+                    
+                    # Nạp lệnh vào Hàng đợi thay vì ghi đè ngay lập tức
+                    if action == "up" and last_dir != "down": direction_queue.append("up")
+                    elif action == "down" and last_dir != "up": direction_queue.append("down")
+                    elif action == "left" and last_dir != "right": direction_queue.append("left")
+                    elif action == "right" and last_dir != "left": direction_queue.append("right")
         except:
             running = False
 
-    # 2. Nhiệm vụ 2: Vòng lặp tự động chạy của rắn
     async def game_loop():
-        nonlocal snake, direction, apple, score, running
+        nonlocal snake, direction_queue, current_dir, apple, score, running, game_state
         try:
             while running:
-                # Lấy vị trí cái ĐẦU rắn hiện tại
-                head = snake[0].copy()
+                if game_state == "playing":
+                    # Lấy lệnh điều khiển đầu tiên trong hàng đợi ra để xử lý
+                    if len(direction_queue) > 0:
+                        current_dir = direction_queue.pop(0)
+
+                    head = snake[0].copy()
+                    
+                    if current_dir == "up": head["y"] -= 1
+                    elif current_dir == "down": head["y"] += 1
+                    elif current_dir == "left": head["x"] -= 1
+                    elif current_dir == "right": head["x"] += 1
+
+                    if head["x"] < 0 or head["x"] > 19 or head["y"] < 0 or head["y"] > 19 or head in snake:
+                        game_state = "gameover"
+                        await websocket.send(json.dumps({"snake": snake, "apple": apple, "score": score, "status": game_state}))
+                        
+                        snake = [{"x": 10, "y": 10}]
+                        direction_queue = ["right"]
+                        current_dir = "right"
+                        score = 0
+                        apple = {"x": random.randint(0, 19), "y": random.randint(0, 19)}
+                        
+                        await asyncio.sleep(1.5)
+                        game_state = "waiting"
+                        continue
+
+                    snake.insert(0, head)
+                    if head["x"] == apple["x"] and head["y"] == apple["y"]:
+                        score += 1
+                        apple = {"x": random.randint(0, 19), "y": random.randint(0, 19)}
+                    else:
+                        snake.pop()
+
+                await websocket.send(json.dumps({"snake": snake, "apple": apple, "score": score, "status": game_state}))
                 
-                # Tính toán tọa độ cái đầu mới
-                if direction == "up": head["y"] -= 1
-                elif direction == "down": head["y"] += 1
-                elif direction == "left": head["x"] -= 1
-                elif direction == "right": head["x"] += 1
-
-                # Luật thua: Đụng 4 bức tường hoặc tự cắn trúng thân mình
-                if head["x"] < 0 or head["x"] > 19 or head["y"] < 0 or head["y"] > 19 or head in snake:
-                    # Gửi tin báo thua, sau đó reset lại game từ đầu
-                    await websocket.send(json.dumps({"snake": snake, "apple": apple, "score": score, "status": "gameover"}))
-                    snake = [{"x": 10, "y": 10}]
-                    direction = "right"
-                    score = 0
-                    apple = {"x": random.randint(0, 19), "y": random.randint(0, 19)}
-                    await asyncio.sleep(1.5) # Chờ 1.5 giây rồi mới cho chơi tiếp
-                    continue
-
-                # Rắn mọc thêm đầu mới
-                snake.insert(0, head)
-
-                # Kiểm tra xem có ăn trúng táo không
-                if head["x"] == apple["x"] and head["y"] == apple["y"]:
-                    score += 1
-                    apple = {"x": random.randint(0, 19), "y": random.randint(0, 19)}
-                else:
-                    # Nếu KHÔNG ăn táo thì xóa cái đuôi cuối cùng (cắt đuôi bù đầu = giữ nguyên độ dài)
-                    # Nếu CÓ ăn táo thì không xóa đuôi (rắn sẽ tự dài ra 1 ô)
-                    snake.pop()
-
-                # Gửi trạng thái về cho Web
-                await websocket.send(json.dumps({"snake": snake, "apple": apple, "score": score, "status": "playing"}))
-                
-                # Tốc độ rắn chạy (0.15 giây 1 ô). Số càng nhỏ rắn chạy càng nhanh.
-                await asyncio.sleep(0.15) 
+                # Tăng tốc độ game để giảm cảm giác trễ (0.09 thay vì 0.15)
+                await asyncio.sleep(0.09)
         except:
             running = False
 
-    # Chạy song song 2 nhiệm vụ trên cùng lúc
     listener = asyncio.create_task(listen())
     loop = asyncio.create_task(game_loop())
     await asyncio.wait([listener, loop], return_when=asyncio.FIRST_COMPLETED)
